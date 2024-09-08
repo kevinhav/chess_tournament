@@ -1,0 +1,91 @@
+---
+title: "Chess Tournament Database Pipeline"
+author: "Kevin Havis"
+format: pdf
+editor: visual
+---
+
+## Introduction
+
+
+
+## Loading the data
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+col_names = c(
+  'pair_num',
+  'playerName_uscfId_preRtg_postRtg',
+  'total',
+  'round_1',
+  'round_2',
+  'round_3',
+  'round_4',
+  'round_5',
+  'round_6',
+  'round_7'
+)
+
+df <- tibble(txt = read_lines('tournament_info.txt')) |> 
+  separate_rows(sep = '\\n') |> 
+  separate(col = txt, into = col_names, sep = '\\|')
+```
+
+
+```{r}
+# Read the file as a complete string
+lines <- read_lines('tournament_info.txt')
+```
+
+```{r}
+# Remove dash lines
+lines <- lines |> 
+  str_remove_all('-')
+
+lines <- lines[lines != ""]
+```
+
+
+```{r}
+lines_list <- list(lines)
+
+q
+```
+
+
+```{r}
+header <- c(
+  "player_name",
+  "player_state",
+  "total_points",
+  "player_prerating",
+  "avg_opponents_prerating"
+)
+```
+
+
+## Reading the data
+
+
+## Calculating fields
+
+### Player's name
+
+### Player's state
+
+### Total number of points
+
+### Player's pre-rating
+
+### Average pre-rating of opponents
+
+## Building CSV
+
+## Loading to database
+
+## Conclusion
+
+
