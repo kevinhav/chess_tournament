@@ -15,10 +15,14 @@ editor: visual
 library(tidyverse)
 ```
 
+## Reading the data
+
 ```{r}
+
+# Predefine our column names
 col_names = c(
-  'pair_num',
-  'playerName_uscfId_preRtg_postRtg',
+  'pairNum_state',
+  'player_info',
   'total',
   'round_1',
   'round_2',
@@ -29,48 +33,105 @@ col_names = c(
   'round_7'
 )
 
+
+# Create a tibble by splitting row-wise by line breaks
+# and column-wise by pipe
 df <- tibble(txt = read_lines('tournament_info.txt')) |> 
   separate_rows(sep = '\\n') |> 
   separate(col = txt, into = col_names, sep = '\\|')
+
+# Drop --- row separators
+df <- na.omit(df)
+
+# Drop secondary header
+df <- df |> 
+  filter(!row_number() == 2)
 ```
-
-
-```{r}
-# Read the file as a complete string
-lines <- read_lines('tournament_info.txt')
-```
-
-```{r}
-# Remove dash lines
-lines <- lines |> 
-  str_remove_all('-')
-
-lines <- lines[lines != ""]
-```
-
-
-```{r}
-lines_list <- list(lines)
-
-q
-```
-
-
-```{r}
-header <- c(
-  "player_name",
-  "player_state",
-  "total_points",
-  "player_prerating",
-  "avg_opponents_prerating"
-)
-```
-
-
-## Reading the data
-
 
 ## Calculating fields
+
+```{r}
+# Retrieve the state values as a new vector
+states <- df |> 
+  select(pairNum_state) |> 
+  filter(str_detect(pairNum_state, "[A-Z]{2}")) |> 
+  rename("state" = "pairNum_state")
+
+# Retrieve USCF ID
+uscf_id <- df |> 
+  select(player_info) |> 
+  filter(str_detect(player_info, "[0-9]{8}")) |> 
+  mutate(uscf_id = str_extract(player_info, "([0-9]{8})")) |> 
+  select(uscf_id)
+
+# Retrieve pre_rating
+pre_rating <- df |> 
+  select(player_info) |> 
+  filter(str_detect(player_info, "[0-9]{8}")) |> 
+  mutate(pre_rating = str_extract(player_info, "(?<=R:\\s{1,5})\\d+")) |> 
+  select(pre_rating)
+
+# Retrieve post_rating
+post_rating <- df |> 
+  select(player_info) |> 
+  filter(str_detect(player_info, "[0-9]{8}")) |> 
+  mutate(post_rating = str_extract(player_info, "(?<=>\\s{0,5})\\d{3,4}")) |> 
+  select(post_rating)
+
+```
+
+```{r}
+# Drop unnecessary rows and add our formatted vectors
+
+df <- df |> 
+  filter(str_detect(pairNum_state, "[0-9]")) |> 
+  cbind(states) |> 
+  cbind(uscf_id) |>
+  cbind(pre_rating) |>
+  cbind(post_rating) |> 
+  rename("player_no" = "pairNum_state")
+```
+
+```{r}
+# Split rounds into result and opponent
+
+round_columns <- c(
+  "round_1",
+  "round_2",
+  "round_3",
+  "round_4",
+  "round_5",
+  "round_6",
+  "round_7")
+
+
+df <- df |> 
+  separate_wider_delim(
+    cols = round_columns,
+    delim = " ",
+    names = c("result", "opponent"),
+    names_sep = "_",
+    too_few = "align_start",
+    too_many = "merge"
+  )
+
+#df <- Reduce(function(x, col) round_splitter(x, col), round_columns, init = df)
+```
+
+```{r}
+# Clean columns of white space
+df <- df |> 
+  mutate()
+```
+
+
+```{r}
+# Get average opponents' ratings for each player
+rounds <- df |> 
+  pivot_longer(cols = ends_with("opponent"), names_to = "round", values_to = "opponent") |> left_join(df, by = c("opponent" = "player_no"))
+
+```
+
 
 ### Player's name
 
