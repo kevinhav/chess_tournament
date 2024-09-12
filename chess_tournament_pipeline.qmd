@@ -121,7 +121,7 @@ df <- df |>
 ```{r}
 # Clean columns of white space
 df <- df |> 
-  mutate()
+  mutate(player_no = trimws(player_no))
 ```
 
 
