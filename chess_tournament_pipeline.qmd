@@ -7,8 +7,6 @@ editor: visual
 
 ## Introduction
 
-
-
 ## Loading the data
 
 ```{r}
@@ -19,20 +17,19 @@ library(tidyverse)
 
 ```{r}
 
-# Predefine our column names
+# Pre-define our target column names
 col_names = c(
   'pairNum_state',
   'player_info',
   'total',
-  'round_1',
-  'round_2',
-  'round_3',
-  'round_4',
-  'round_5',
-  'round_6',
-  'round_7'
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7'
 )
-
 
 # Create a tibble by splitting row-wise by line breaks
 # and column-wise by pipe
@@ -48,9 +45,10 @@ df <- df |>
   filter(!row_number() == 2)
 ```
 
-## Calculating fields
+## Separate values
 
 ```{r}
+# TODO See if I can do this in one go with mutate()]
 # Retrieve the state values as a new vector
 states <- df |> 
   select(pairNum_state) |> 
@@ -89,46 +87,60 @@ df <- df |>
   cbind(uscf_id) |>
   cbind(pre_rating) |>
   cbind(post_rating) |> 
-  rename("player_no" = "pairNum_state")
+  rename("player_no" = "pairNum_state") |> 
+  rename("player_name" = "player_info")
 ```
 
+
 ```{r}
-# Split rounds into result and opponent
-
-round_columns <- c(
-  "round_1",
-  "round_2",
-  "round_3",
-  "round_4",
-  "round_5",
-  "round_6",
-  "round_7")
-
-
+# Clean columns of white spaces
 df <- df |> 
-  separate_wider_delim(
-    cols = round_columns,
-    delim = " ",
-    names = c("result", "opponent"),
-    names_sep = "_",
-    too_few = "align_start",
-    too_many = "merge"
-  )
-
-#df <- Reduce(function(x, col) round_splitter(x, col), round_columns, init = df)
+  mutate(across(everything(), ~ str_trim(.x))) |> 
+  mutate(pre_rating = as.numeric(pre_rating)) |> 
+  mutate(post_rating = as.numeric(pre_rating))   
 ```
 
-```{r}
-# Clean columns of white space
-df <- df |> 
-  mutate(player_no = trimws(player_no))
-```
-
+## Organize into tables
 
 ```{r}
-# Get average opponents' ratings for each player
+# Split into logical tables
+
+players <- df |> 
+  select(player_no, player_name, state, uscf_id, pre_rating, post_rating, total) |> 
+  mutate(rating_delta = post_rating - pre_rating)
+
+#TODO make the number of rounds dynamic
 rounds <- df |> 
-  pivot_longer(cols = ends_with("opponent"), names_to = "round", values_to = "opponent") |> left_join(df, by = c("opponent" = "player_no"))
+  select(player_no, "1", "2", "3", "4", "5", "6", "7") |> 
+  pivot_longer(cols = c("1", "2", "3", "4", "5", "6", "7"), names_to = "round", values_to = "results" )|> 
+  separate_wider_regex(col = results, patterns = c(
+    'result' = "^(?:[A-Z])",
+    'opponent' = "\\s*(?:\\d*)$"
+    ),
+    too_few = "align_start"
+  ) |> 
+  mutate(opponent = str_trim(opponent))
+
+```
+
+## Calculate tournament stats
+
+```{r}
+average_ratings <- left_join(rounds, players, by = c("opponent" = "player_no")) |> 
+  group_by(player_no) |> 
+  summarize(average_opponent_rating = mean(pre_rating, na.rm = TRUE))
+
+players <- left_join(players, average_ratings, by = "player_no")
+```
+
+## Build final table
+
+```{r}
+# player name, player state, total, pre_rating, average pre_rating
+
+final_table <- players |> 
+  select(player_name, state, total, pre_rating, average_opponent_rating) |> 
+  rename("total_points" = "total")
 
 ```
 
@@ -148,5 +160,3 @@ rounds <- df |>
 ## Loading to database
 
 ## Conclusion
-
-
