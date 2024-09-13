@@ -42,7 +42,7 @@ df <- na.omit(df)
 
 # Drop secondary header
 df <- df |> 
-  filter(!row_number() == 2)
+  slice(-(1:2))
 ```
 
 ## Separate values
