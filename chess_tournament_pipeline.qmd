@@ -11,31 +11,32 @@ editor: visual
 
 ```{r}
 library(tidyverse)
+library(purrr)
 ```
 
 ## Reading the data
 
 ```{r}
 
-# Pre-define our target column names
-col_names = c(
+# Pre-define our initial column names
+init_cols = c(
   'pairNum_state',
   'player_info',
   'total',
-  '1',
-  '2',
-  '3',
-  '4',
-  '5',
-  '6',
-  '7'
+  'round_1',
+  'round_2',
+  'round_3',
+  'round_4',
+  'round_5',
+  'round_6',
+  'round_7'
 )
 
 # Create a tibble by splitting row-wise by line breaks
 # and column-wise by pipe
 df <- tibble(txt = read_lines('tournament_info.txt')) |> 
   separate_rows(sep = '\\n') |> 
-  separate(col = txt, into = col_names, sep = '\\|')
+  separate(col = txt, into = init_cols, sep = '\\|')
 
 # Drop --- row separators
 df <- na.omit(df)
@@ -44,6 +45,112 @@ df <- na.omit(df)
 df <- df |> 
   slice(-(1:2))
 ```
+
+```{r}
+# We have two rows per player so we group them and create new columns
+
+df <- df |> 
+  group_by(grp = ceiling(row_number()/2)) |> 
+  mutate(row = row_number()) |> 
+  pivot_wider(names_from = row, values_from = -c(row, grp)) |> 
+  ungroup() |> 
+  select(-grp) |> 
+  mutate(across(everything(), ~ str_trim(.x)))
+```
+
+```{r}
+# Update column names
+col_names = c(
+  "player",
+  "state",
+  "name",
+  "rating_info",
+  "total_pts",
+  "n",
+  "results_rd_1",
+  "color_rd_1",
+  "results_rd_2",
+  "color_rd_2",
+  "results_rd_3",
+  "color_rd_3",
+  "results_rd_4",
+  "color_rd_4",
+  "results_rd_5",
+  "color_rd_5",
+  "results_rd_6",
+  "color_rd_6",
+  "results_rd_7",
+  "color_rd_7"
+)
+
+df <- df |> set_names(col_names)
+
+```
+
+```{r}
+# Split combined columns into single columns
+df |> 
+ separate_wider_regex(
+   starts_with("results"),
+   patterns = c(
+     result = "[WLDBH]",
+     opponent = "\\s+\\d+"),
+   names_sep = "_",
+   too_few = "align_start")
+```
+
+```{r}
+# These patterns work in str_view(), but not in separate_wider_regex()
+pattern_1 = "\\s*\\d{8}"
+pattern_2 = "(?<=R:\\s)\\d{3,4}"
+pattern_3 = "(?<=->\\s{0,5})\\d{3,4}"
+
+# Sample data
+repr_df <- tibble(rating_info = c(
+  "15445895 / R: 1794   ->1817",
+  "14598900 / R: 1553   ->1663",
+  "14959604 / R: 1384   ->1640"
+  )
+)
+
+# I separate_wider_regex() does not capture pattern 2 or pattern 3
+repr_df_debug <- repr_df |> 
+    separate_wider_regex(
+    rating_info,
+    patterns = c(
+      uscfid = pattern_1, # This works
+      pre_rating = pattern_2, # This does not work
+      post_rating = pattern_3 # This does not work
+      ),
+    too_few = "debug"
+    )
+
+
+# str_view() works for pattern 2 and 3
+str_view(repr_df$rating_info, pattern_2)
+str_view(repr_df$rating_info, pattern_3)
+
+```
+
+
+```{r}
+df |> 
+  separate_wider_regex(
+    rating_info,
+    patterns = c(
+      #uscfid = "\\s*\\d{8}",
+      pre_rating = "(?<=R:\\S)\\d{3,4}",
+      post_rating = "(?<=->\\s{0,5})\\d{3,4}"
+      ),
+    too_few = "debug"
+    )
+```
+```{r}
+str_view(df$rating_info, "(?<=R:\\s)\\d{3,4}")
+str_extract(df$my_string, "(?<=R:\\s)\\d{3,4}")
+
+```
+
 
 ## Separate values
 
