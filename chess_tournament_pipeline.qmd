@@ -5,9 +5,7 @@ format: pdf
 editor: visual
 ---
 
-## Introduction
-
-## Loading the data
+## Setup
 
 ```{r}
 library(tidyverse)
@@ -17,7 +15,15 @@ library(duckdb)
 library(tools)
 ```
 
-## Reading the data
+## Introduction
+
+
+
+## Loading & cleaning the data
+
+This data is easily human-readable, however it has a couple things we need to address to get it into proper shape.
+
+The headers, rows, and columns are delimited by ASCII characters, which we will need to strip out. We'll do this by reading each line in as a row and delimiting the columns.
 
 ```{r}
 
@@ -48,6 +54,7 @@ df <- na.omit(df)
 df <- df |> 
   slice(-(1:2))
 ```
+With the extra ASCII characters cleaned up, we're in much better shape. We can now turn our attention to the stacked rows for each player. To do this, we'll group the rows and then pivot them wider into their own columns.
 
 ```{r}
 # We have two rows per player so we group them and create new columns
@@ -89,6 +96,8 @@ col_names = c(
 df <- df |> set_names(col_names)
 
 ```
+
+Next, we'll need to address the concatenated values, including the "rating_info" which contains the player's USCF ID, rating before the tournament, and rating after the tournament. We'll also split the "results" columns for each round into the result (W / L) and the opponent's ID number using regex.
 
 ```{r}
 # Split results columns into single columns
@@ -134,14 +143,26 @@ df <- df |>
   select(everything(), -rating_info)
 ```
 
+We now have a well organized and "tidy" data set! 
+
+## Save into database
+
+While this data is useful and we could certainly perform any further analysis we'd like with it, we should store it properly in a database. This will allow us manage the data in a scalable way to accommodate new players and future tournaments.
+
+We'll first split the data into logical tables, `players` and `rounds`. The `players` data is already well organized, but we'll add some finishing touches
+
 ```{r}
-# Separate into logical tables
+# Separate data into player table
 
 players <- df |> 
   select(player, state, name, pre_rating, post_rating, total_pts) |> 
   mutate(rating_change = post_rating - pre_rating) |> 
   mutate(name = str_to_title(name))
+```
 
+The `rounds` table will contain information specific to this tournament. To make this more database-friendly, we'll convert the data into a long format.
+
+```{r}
 rounds <- df |>
   pivot_longer(
     cols = starts_with("results_rd_"),
@@ -160,6 +181,36 @@ rounds <- df |>
   ) |> 
   select(player, color, round, result, opponent)
 ```
+
+
+```{r}
+# Give rounds a unique ID as a key
+rounds <- rounds |> 
+  mutate(id = row_number())
+  
+conn <- DBI::dbConnect(duckdb::duckdb(), dbdir = "tournament.db")
+
+# Write tables if they don't already exist
+if (!dbExistsTable(conn, "players")) {
+dbWriteTable(conn, "players", players)
+} else {
+  print("Table already exists, skipping write")
+}
+
+
+if (!dbExistsTable(conn, "rounds")) {
+dbWriteTable(conn, "rounds", rounds)
+} else {
+  print("Table already exists, skipping write")
+}
+
+
+dbDisconnect(conn)
+```
+
+## Tournament Results
+
+Now, finally, we can calculate the final results of the tournament.
 
 ## Calculate tournament stats
 
@@ -180,35 +231,6 @@ final_table <- players |>
   select(player, name, state, total_pts, pre_rating, average_opponent_rating)
 
 ```
-
-## Save into database
-
-```{r}
-# Give rounds a unique ID as a key
-rounds <- rounds |> 
-  mutate(id = row_number())
-  
-conn <- DBI::dbConnect(duckdb::duckdb(), dbdir = "tournament.db")
-
-# Write tables if they don't already exist
-if (!dbExistsTable(conn, "players")) {
-dbWriteTable(conn, "players", players)
-} else {
-  print("Table already exists, skipping write. \n")
-}
-
-
-if (!dbExistsTable(conn, "rounds")) {
-dbWriteTable(conn, "rounds", rounds)
-} else {
-  print("Table already exists, skipping write. \n")
-}
-
-
-dbDisconnect(conn)
-```
-
-## Tournament Results
 
 ```{r fig.align="center", echo = FALSE, fig.wdith = 14, fig.height=10}
 players_viz <- players |> 
