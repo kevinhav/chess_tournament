@@ -1,31 +1,52 @@
 ---
 title: "Chess Tournament Database Pipeline"
 author: "Kevin Havis"
-format: pdf
+format: html
+df_print: kable
 editor: visual
 ---
 
 ## Setup
 
-```{r}
+```{r, output=FALSE}
 library(tidyverse)
 library(purrr)
 library(DBI)
 library(duckdb)
 library(tools)
+library(knitr)
 ```
 
 ## Introduction
+
+We'll be parsing a text file containing the results of recent chess tournament in this article. By leveraging `dplyr` and `tidyverse` libraries, we can convert this text file into a proper structured data set. Once we have the data formatted, we can review the results of the tournament.
 
 
 
 ## Loading & cleaning the data
 
-This data is easily human-readable, however it has a couple things we need to address to get it into proper shape.
+This data is easily human-readable, however it has a couple things we need to address to get it into proper shape. Let's start with cleaning up the ASCII delimiters.
+
+```
+-----------------------------------------------------------------------------
+ Pair | Player Name                     |Total|Round|Round|Round|Round|Round|
+ Num  | USCF ID / Rtg (Pre->Post)       | Pts |  1  |  2  |  3  |  4  |  5  |
+-----------------------------------------------------------------------------
+    1 | GARY HUA                        |6.0  |W  39|W  21|W  18|W  14|W   7|
+   ON | 15445895 / R: 1794   ->1817     |N:2  |W    |B    |W    |B    |W    |
+-----------------------------------------------------------------------------
+    2 | DAKSHESH DARURI                 |6.0  |W  63|W  58|L   4|W  17|W  16|
+   MI | 14598900 / R: 1553   ->1663     |N:2  |B    |W    |B    |W    |B    |
+-----------------------------------------------------------------------------
+    3 | ADITYA BAJAJ                    |6.0  |L   8|W  61|W  25|W  21|W  11|
+   MI | 14959604 / R: 1384   ->1640     |N:2  |W    |B    |W    |B    |W    |
+```
+
+### ASCII clean up
 
 The headers, rows, and columns are delimited by ASCII characters, which we will need to strip out. We'll do this by reading each line in as a row and delimiting the columns.
 
-```{r}
+```{r, warning = FALSE}
 
 # Pre-define our initial column names
 init_cols = c(
@@ -54,15 +75,21 @@ df <- na.omit(df)
 df <- df |> 
   slice(-(1:2))
 ```
+
+```{r, echo = FALSE}
+kable(head(df))
+```
+
+### Ungrouping the rows
+
 With the extra ASCII characters cleaned up, we're in much better shape. We can now turn our attention to the stacked rows for each player. To do this, we'll group the rows and then pivot them wider into their own columns.
 
 ```{r}
 # We have two rows per player so we group them and create new columns
-
 df <- df |> 
-  group_by(grp = ceiling(row_number()/2)) |> 
+  group_by(grp = ceiling(row_number()/2)) |> # create groups by rounding the mod of each row number
   mutate(row = row_number()) |> 
-  pivot_wider(names_from = row, values_from = -c(row, grp)) |> 
+  pivot_wider(names_from = row, values_from = -c(row, grp)) |> # break out row pairs into columns
   ungroup() |> 
   select(-grp) |> 
   mutate(across(everything(), ~ str_trim(.x)))
@@ -97,7 +124,15 @@ df <- df |> set_names(col_names)
 
 ```
 
-Next, we'll need to address the concatenated values, including the "rating_info" which contains the player's USCF ID, rating before the tournament, and rating after the tournament. We'll also split the "results" columns for each round into the result (W / L) and the opponent's ID number using regex.
+```{r, echo=FALSE}
+kable(head(df))
+```
+
+### Concatenated values
+
+Next, we'll need to address the concatenated values, including the `rating_info` which contains the player's USCF ID, rating before the tournament, and rating after the tournament.
+
+We'll also split the "results" columns for each round into the result (W / L) and the opponent's ID number using regex.
 
 ```{r}
 # Split results columns into single columns
@@ -113,27 +148,27 @@ df <- df |>
 ```
 
 ```{r}
-# Retrieve USCF ID
-uscf_id <- df |> 
-  select(rating_info) |> 
+# Create interim tibble
+rating_df <- df |> 
   filter(str_detect(rating_info, "[0-9]{8}")) |> 
+  select(rating_info)
+
+# Retrieve USCF ID
+uscf_id <- rating_df |> 
   mutate(uscf_id = str_extract(rating_info, "([0-9]{8})")) |> 
   select(uscf_id)
 
 # Retrieve pre_rating
-pre_rating <- df |> 
-  select(rating_info) |> 
-  filter(str_detect(rating_info, "[0-9]{8}")) |> 
+pre_rating <- rating_df |> 
   mutate(pre_rating = str_extract(rating_info, "(?<=R:\\s{1,5})\\d+")) |> 
   select(pre_rating)
 
 # Retrieve post_rating
-post_rating <- df |> 
-  select(rating_info) |> 
-  filter(str_detect(rating_info, "[0-9]{8}")) |> 
+post_rating <- rating_df |> 
   mutate(post_rating = str_extract(rating_info, "(?<=>\\s{0,5})\\d{3,4}")) |> 
   select(post_rating)
 
+# Add new columns to main tibble
 df <- df |> 
   cbind(uscf_id) |>
   cbind(pre_rating) |>
@@ -145,11 +180,17 @@ df <- df |>
 
 We now have a well organized and "tidy" data set! 
 
+```{r, echo=FALSE}
+kable(head(df))
+```
+
 ## Save into database
 
 While this data is useful and we could certainly perform any further analysis we'd like with it, we should store it properly in a database. This will allow us manage the data in a scalable way to accommodate new players and future tournaments.
 
-We'll first split the data into logical tables, `players` and `rounds`. The `players` data is already well organized, but we'll add some finishing touches
+### Prepare our tables
+
+We'll first split the data into logical tables, `players` and `rounds`. The `players` data is already well organized, but we'll add some finishing touches.
 
 ```{r}
 # Separate data into player table
@@ -163,6 +204,7 @@ players <- df |>
 The `rounds` table will contain information specific to this tournament. To make this more database-friendly, we'll convert the data into a long format.
 
 ```{r}
+# Convert round columns into long format
 rounds <- df |>
   pivot_longer(
     cols = starts_with("results_rd_"),
@@ -182,8 +224,11 @@ rounds <- df |>
   select(player, color, round, result, opponent)
 ```
 
+### Write to the database
 
-```{r}
+Now we can actually add our new tables to our database. 
+
+```{r, output = FALSE}
 # Give rounds a unique ID as a key
 rounds <- rounds |> 
   mutate(id = row_number())
@@ -194,27 +239,29 @@ conn <- DBI::dbConnect(duckdb::duckdb(), dbdir = "tournament.db")
 if (!dbExistsTable(conn, "players")) {
 dbWriteTable(conn, "players", players)
 } else {
-  print("Table already exists, skipping write")
+  
 }
 
 
 if (!dbExistsTable(conn, "rounds")) {
 dbWriteTable(conn, "rounds", rounds)
 } else {
-  print("Table already exists, skipping write")
+
 }
 
 
 dbDisconnect(conn)
 ```
 
-## Tournament Results
+## Tournament results
 
 Now, finally, we can calculate the final results of the tournament.
 
-## Calculate tournament stats
+We'll calculate the average rating of each player's opponents.
 
 ```{r}
+# Calculate average opponent's rating
+
 average_ratings <- left_join(rounds, players, by = c("opponent" = "player")) |> 
   group_by(player) |> 
   summarize(average_opponent_rating = mean(pre_rating, na.rm = TRUE))
@@ -222,17 +269,29 @@ average_ratings <- left_join(rounds, players, by = c("opponent" = "player")) |>
 players <- left_join(players, average_ratings, by = "player")
 ```
 
-## Build final table
+### Build our final table
+
+Our final table contains the player number, the player's name, their home state, the total points they won through the tournament, their rating before the tournament, and finally, our newly calculated average opponent's rating.
 
 ```{r}
-# player name, player state, total, pre_rating, average pre_rating
+# Create final table
 
 final_table <- players |> 
   select(player, name, state, total_pts, pre_rating, average_opponent_rating)
-
 ```
 
-```{r fig.align="center", echo = FALSE, fig.wdith = 14, fig.height=10}
+```{r, echo=FALSE}
+kable(head(final_table))
+```
+
+
+### Winners and losers
+
+Now that we have all our data in order, we can review the results of the tournament. Let's visualize the change in ratings after the tournament.
+
+```{r fig.align="left", echo = FALSE, fig.wdith = 18, fig.height=10}
+# Create a dumbbell plot of pre and post ratings per player
+
 players_viz <- players |> 
   select(name, pre_rating, post_rating) |> 
   pivot_longer(
@@ -243,36 +302,22 @@ players_viz <- players |>
 
 ggplot(players, aes(y = reorder(name, pre_rating))) +
   geom_segment(aes(x = pre_rating, xend = post_rating, yend = name),
-               size = 3,
+               linewidth = 3,
                color = "grey",
                alpha = 0.5) +
-  geom_point(aes(x = pre_rating), size = 3, color = "grey") +
-  geom_point(aes(x = post_rating), size = 3, color = "blue") +
+  geom_point(aes(x = pre_rating), size = 3, color = "grey") + 
+  geom_point(aes(x = post_rating), size = 3, color = "#81B64C") + # Use chess.com color for fun
   labs(
     x = "Rating",
     y = "Player",
-    title = "Player rankings after chess tournament"
+    title = "Winners and losers of the chess tournament"
   ) +
   scale_x_continuous(n.breaks = 6) +
-  #theming
-  theme_minimal()+
-  theme(panel.grid.major.y = element_blank())#,
-        #panel.grid.minor.y = element_blank(),
-        #panel.grid.major.x = element_blank(),
-        #panel.grid.minor.x = element_blank(),
-        #axis.title.y = element_blank(),
-        #axis.text.y = element_blank(),
-        #axis.ticks.y = element_blank(),
-        #axis.ticks.x = element_line(color = "#4a4e4d"),
-        #text = element_text(family = "Segoe UI Semibold", color = "#4a4e4d"),
-        #strip.text.y.left  = element_text(angle = 0),
-        #panel.background = element_rect(fill = "white", color = "white"),
-        #strip.background = element_rect(fill = "white", color = "white"),
-        #strip.text = element_text(color = "#4a4e4d", family = "Segoe UI"),
-        #plot.background = element_rect(fill = "white", color = "white"),
-        #panel.spacing = unit(0, "lines"),
-        #plot.margin = margin(1,1,.5,1, "cm"))
+  theme_minimal()
+
 
 ```
 
+## Conclusion
 
+In this article we developed a full end-to-end pipeline to parse, organize, store, and visualize the results of a chess tournament. We used common packages from the `tidyverse` and leaned heavily on regex to extract the key values out of our data. Once the data was in tidy shape, we separated it into logical relational tables and uploaded to our database. Finally, we plotted the outcomes of the tournament to identify the winners and losers of the event.
